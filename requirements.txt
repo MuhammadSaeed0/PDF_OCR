@@ -1,0 +1,12 @@
+# PDF OCR - Python dependencies
+# Python 3.11, 3.12 (recommended) or 3.13, 64-bit.
+# Install:  python -m pip install -r requirements.txt   (install.bat does this inside .venv)
+#
+# NOT installed by pip - install separately (see README.md):
+#   * Tesseract OCR 5.x  (+ Arabic language data)
+#   * Ghostscript 10.x
+#
+# Upper bounds keep the tested major versions; ocrmypdf pulls in pikepdf, pdfminer.six,
+# Pillow and its other dependencies automatically.
+ocrmypdf>=16.5,<17
+PyMuPDF>=1.24.10,<1.27

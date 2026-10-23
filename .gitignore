@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Created at runtime / by the installer
+data/
+logs/
+tessdata/
+*.tmp
+
+# Documents being processed - never commit them
+Input/
+Output/
+Staging/
