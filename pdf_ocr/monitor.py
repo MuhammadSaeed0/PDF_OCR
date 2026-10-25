@@ -30,6 +30,7 @@ _REASON_TAGS = {
     "source_changed": "REPROCESS",
     "output_deleted": "REGENERATE",
     "output_invalid": "REGENERATE",
+    "ocr_upgraded": "REPROCESS",
     "retry": "RETRY",
 }
 
@@ -51,6 +52,7 @@ class Snapshot:
     files: dict[str, FileView]
     current_file: str | None
     current_started: float | None
+    current_pages: tuple[int, int] | None  # (pages done, pages to OCR) of the current file
     batch_done: int
     batch_total: int
     fatal_error: str | None
@@ -84,6 +86,7 @@ class Monitor:
         self._phase = "stopped"
         self._current: str | None = None
         self._current_started: float | None = None
+        self._current_pages: tuple[int, int] | None = None
         self._batch_done = 0
         self._batch_total = 0
         self._last_scan_problem: str | None = None
@@ -121,7 +124,7 @@ class Monitor:
     def snapshot(self) -> Snapshot:
         with self._lock:
             files = dict(self._views)
-            current, current_started = self._current, self._current_started
+            current, current_started, current_pages = self._current, self._current_started, self._current_pages
         counts = {status: 0 for status in STATUSES}
         for view in files.values():
             counts[view.status] = counts.get(view.status, 0) + 1
@@ -132,6 +135,7 @@ class Monitor:
             files=files,
             current_file=current,
             current_started=current_started,
+            current_pages=current_pages,
             batch_done=self._batch_done,
             batch_total=self._batch_total,
             fatal_error=self.fatal_error,
@@ -186,7 +190,7 @@ class Monitor:
         finally:
             self._instance_lock.release()
             with self._lock:
-                self._current = None
+                self._current, self._current_pages = None, None
             if self._phase != "error":
                 self._phase = "stopped"
             if started:
@@ -222,8 +226,8 @@ class Monitor:
 
         logger.info("Source folder:      %s", cfg.source_folder)
         logger.info("Destination folder: %s", cfg.destination_folder)
-        logger.info("OCR languages: %s | mode: %s | scan every %d s", cfg.ocr.languages, cfg.ocr.mode,
-                    cfg.scan_interval_seconds)
+        logger.info("OCR languages: %s | resolution: %d dpi | scan every %d s", cfg.ocr.languages,
+                    cfg.ocr.resolution, cfg.scan_interval_seconds)
         logger.info("State file: %s", cfg.state_file)
         logger.info("Monitoring started.")
 
@@ -380,14 +384,21 @@ class Monitor:
         self._phase = "processing"
         logger.info("STARTED    %s — processing started (%s)", name, REASONS.get(reason, reason))
 
+        def on_progress(done: int, total: int) -> None:
+            with self._lock:
+                self._current_pages = (done, total)
+                self._views[sf.key] = FileView(name, PROCESSING, f"OCR page {done} of {total}", reason)
+            if total and 0 < done < total and done % max(25, total // 10) == 0:
+                logger.info("PROGRESS   %s — %d of %d pages", name, done, total)
+
         try:
-            outcome = processor.process(sf)
+            outcome = processor.process(sf, on_progress)
         except Exception as exc:
             logger.exception("Unexpected error while processing %s", name)
             outcome = Outcome("failed", f"unexpected error: {exc}")
         finally:
             with self._lock:
-                self._current, self._current_started = None, None
+                self._current, self._current_started, self._current_pages = None, None, None
 
         if outcome.status == "completed":
             self._batch_done += 1

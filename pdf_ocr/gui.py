@@ -62,7 +62,7 @@ class App:
 
         self.source_var = tk.StringVar()
         self.dest_var = tk.StringVar()
-        self.lang_var = tk.StringVar(value="eng+ara")
+        self.lang_var = tk.StringVar(value="auto")
         self.interval_var = tk.StringVar(value="15")
         self.status_var = tk.StringVar(value="Stopped")
         self.current_var = tk.StringVar(value="")
@@ -102,7 +102,8 @@ class App:
         ttk.Label(options, text="OCR languages:").pack(side=tk.LEFT)
         lang_entry = ttk.Entry(options, textvariable=self.lang_var, width=16)
         lang_entry.pack(side=tk.LEFT, padx=(6, 4))
-        ttk.Label(options, text="(Tesseract codes joined with +, e.g. eng+ara)", foreground="#666").pack(side=tk.LEFT)
+        ttk.Label(options, text="(auto = detect Arabic/English per book, or codes like ara, eng+ara)",
+                  foreground="#666").pack(side=tk.LEFT)
         ttk.Label(options, text="      Scan every (seconds):").pack(side=tk.LEFT)
         interval = ttk.Spinbox(options, from_=2, to=3600, textvariable=self.interval_var, width=6)
         interval.pack(side=tk.LEFT, padx=6)
@@ -203,7 +204,7 @@ class App:
             return False
         try:
             update_ini_values(self.config_path, "folders", {"source_folder": source, "destination_folder": dest})
-            update_ini_values(self.config_path, "ocr", {"languages": langs or "eng+ara"})
+            update_ini_values(self.config_path, "ocr", {"languages": langs or "auto"})
             update_ini_values(self.config_path, "monitor", {"scan_interval_seconds": str(interval)})
         except OSError as exc:
             messagebox.showerror("Configuration", f"Could not save the settings to {self.config_path}:\n{exc}")
@@ -347,14 +348,18 @@ class App:
             self.tree.delete(self._iids.pop(key))
             self._rows.pop(key, None)
 
-        if snap.batch_total:
+        if snap.current_pages and snap.current_pages[1]:
+            done_pages, total_pages = snap.current_pages
+            self.progress.configure(maximum=total_pages, value=done_pages)
+        elif snap.batch_total:
             self.progress.configure(maximum=snap.batch_total, value=snap.batch_done)
         else:
             self.progress.configure(maximum=1, value=0)
         if snap.current_file:
             elapsed = int(time.time() - (snap.current_started or time.time()))
+            pages = f"page {snap.current_pages[0]} of {snap.current_pages[1]}   " if snap.current_pages else ""
             self.current_var.set(
-                f"Processing: {snap.current_file}   ({elapsed // 60:02d}:{elapsed % 60:02d})   "
+                f"Processing: {snap.current_file}   {pages}({elapsed // 60:02d}:{elapsed % 60:02d})   "
                 f"— file {snap.batch_done + 1} of {max(snap.batch_total, 1)} in this batch")
         else:
             self.current_var.set("")

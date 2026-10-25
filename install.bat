@@ -3,8 +3,8 @@ rem ======================================================================
 rem  PDF OCR - installer for Windows 10 / 11
 rem  1. finds (or installs with winget) Python 3.11-3.13
 rem  2. creates the virtual environment .venv and installs requirements.txt
-rem  3. finds (or installs) Tesseract OCR (winget) and Ghostscript (official Artifex download)
-rem  4. adds missing OCR language data (Arabic) to .\tessdata
+rem  3. finds (or installs with winget) Tesseract OCR
+rem  4. adds missing OCR language data (Arabic, English) to .\tessdata
 rem  5. creates the source/destination folders and runs verify_install.py
 rem  Safe to run again at any time.
 rem ======================================================================
@@ -69,22 +69,6 @@ goto :fail
 :tesseract_ok
 echo Tesseract found:
 "%VPY%" tools\install_helper.py find tesseract
-
-rem ---------------------------------------------------------------- Ghostscript
-"%VPY%" tools\install_helper.py find ghostscript >nul 2>nul
-if not errorlevel 1 goto :ghostscript_ok
-echo Ghostscript was not found. It is not available from winget; downloading the official installer...
-"%VPY%" tools\install_helper.py install-ghostscript
-"%VPY%" tools\install_helper.py find ghostscript >nul 2>nul
-if not errorlevel 1 goto :ghostscript_ok
-:manual_ghostscript
-echo.
-echo Please install Ghostscript 64-bit from https://ghostscript.com/releases/gsdnld.html
-echo Then run install.bat again. See README.md, "Installing Ghostscript".
-goto :fail
-:ghostscript_ok
-echo Ghostscript found:
-"%VPY%" tools\install_helper.py find ghostscript
 
 rem ---------------------------------------------------------------- language data
 echo.

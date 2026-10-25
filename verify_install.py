@@ -59,17 +59,19 @@ def main() -> int:
 
     # 2. Python packages
     try:
-        import ocrmypdf
-
-        check.ok(f"ocrmypdf {ocrmypdf.__version__}")
-    except Exception as exc:
-        check.fail(f"ocrmypdf cannot be imported: {exc}", "Run install.bat (pip install -r requirements.txt).")
-    try:
         from pdf_ocr.pdf_utils import pymupdf
 
         check.ok(f"PyMuPDF {pymupdf.__version__}")
     except Exception as exc:
         check.fail(f"PyMuPDF cannot be imported: {exc}", "Run install.bat (pip install -r requirements.txt).")
+        return finish(check)
+    try:
+        import numpy
+        import PIL
+
+        check.ok(f"numpy {numpy.__version__}, Pillow {PIL.__version__}")
+    except Exception as exc:
+        check.fail(f"numpy/Pillow cannot be imported: {exc}", "Run install.bat (pip install -r requirements.txt).")
         return finish(check)
 
     # 3. Configuration
@@ -89,14 +91,13 @@ def main() -> int:
     check.ok(f"Destination folder: {config.destination_folder}"
              + ("" if config.destination_folder.is_dir() else " (will be created on start)"))
 
-    # 4. External programs and language data
+    # 4. Tesseract and language data
     from pdf_ocr.dependencies import (
-        build_env, effective_tessdata_dir, find_ghostscript, find_tesseract, ghostscript_version,
-        run_quiet, tesseract_languages, tesseract_version,
+        build_env, effective_tessdata_dir, find_tesseract, tesseract_languages, tesseract_version,
     )
 
-    tesseract, ghostscript = find_tesseract(config), find_ghostscript(config)
-    env = build_env(config, tesseract, ghostscript)
+    tesseract = find_tesseract(config)
+    env = build_env(config, tesseract)
     if tesseract is None:
         check.fail("Tesseract OCR not found",
                    "Install it from https://github.com/UB-Mannheim/tesseract/wiki or set [paths] tesseract_dir.")
@@ -109,31 +110,14 @@ def main() -> int:
         tessdata = effective_tessdata_dir(config)
         print(f"         language data folder: {tessdata or 'Tesseract default (' + str(tesseract.parent / 'tessdata') + ')'}")
         installed = tesseract_languages(tesseract, env) or []
-        needed = config.ocr.language_list + (["osd"] if config.ocr.rotate_pages else [])
-        for lang in needed:
+        for lang in config.ocr.language_list:
             if lang in installed:
                 check.ok(f"OCR language '{lang}' installed")
             else:
                 check.fail(f"OCR language '{lang}' is missing (installed: {', '.join(installed) or 'none'})",
                            "Run: .venv\\Scripts\\python tools\\setup_tessdata.py")
 
-    if ghostscript is None:
-        check.fail("Ghostscript not found",
-                   "Install it from https://ghostscript.com/releases/gsdnld.html or set [paths] ghostscript_dir.")
-    else:
-        gs_version = ghostscript_version(ghostscript, env)
-        if gs_version:
-            check.ok(f"Ghostscript: {ghostscript} (version {gs_version})")
-        else:
-            check.fail(f"Ghostscript at {ghostscript} does not start")
-
-    from pdf_ocr.ocr_engine import OcrEngine, python_console_executable
-
-    code, output = run_quiet([python_console_executable(), "-m", "ocrmypdf", "--version"], env, timeout=120)
-    if code == 0:
-        check.ok(f"OCRmyPDF command works (version {output.strip().splitlines()[-1]})")
-    else:
-        check.fail(f"'python -m ocrmypdf --version' failed: {output.strip()[-500:]}")
+    from pdf_ocr.ocr_engine import OcrEngine
 
     # 5. Real OCR test
     if args.skip_ocr_test:

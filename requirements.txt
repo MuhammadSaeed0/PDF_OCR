@@ -4,9 +4,9 @@
 #
 # NOT installed by pip - install separately (see README.md):
 #   * Tesseract OCR 5.x  (+ Arabic language data)
-#   * Ghostscript 10.x
 #
-# Upper bounds keep the tested major versions; ocrmypdf pulls in pikepdf, pdfminer.six,
-# Pillow and its other dependencies automatically.
-ocrmypdf>=16.5,<17
+# PyMuPDF: reads the PDFs, renders pages for OCR and adds the text layer.
+# numpy + Pillow: image clean-up before OCR (coloured print, contrast, skew).
 PyMuPDF>=1.24.10,<1.27
+numpy>=1.26,<3
+Pillow>=10.0,<14

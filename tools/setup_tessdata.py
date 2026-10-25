@@ -74,10 +74,10 @@ def main() -> int:
         print("Tesseract OCR is not installed (or not found). Install it first - see README.md.")
         return 1
 
-    wanted = [x for x in (args.langs or config.ocr.languages).replace(",", "+").split("+") if x]
-    for extra in ("osd",):  # needed for rotate_pages; small
-        if extra not in wanted:
-            wanted.append(extra)
+    if args.langs:
+        wanted = [x for x in args.langs.replace(",", "+").split("+") if x]
+    else:
+        wanted = config.ocr.language_list  # languages = auto needs ara and eng
 
     env = build_env(config, tesseract)
     installed = set(tesseract_languages(tesseract, env) or [])
@@ -94,7 +94,7 @@ def main() -> int:
 
     if current_dir is None and config.tessdata_dir is None:
         # First use of .\tessdata: copy Tesseract's own data and configs so nothing is lost
-        # (TESSDATA_PREFIX replaces the default folder; the 'configs' folder is required by OCRmyPDF).
+        # (TESSDATA_PREFIX replaces the default folder; 'configs' and pdf.ttf are needed for PDF output).
         system_dir = tesseract.parent / "tessdata"
         if system_dir.is_dir():
             print(f"Copying existing language data from {system_dir}")

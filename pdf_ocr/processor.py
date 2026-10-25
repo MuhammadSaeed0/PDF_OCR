@@ -5,9 +5,10 @@ A source PDF counts as done only when ALL of these hold:
   * the record's source fingerprint (size + modification time, confirmed by SHA-256
     when those differ) matches the current source file, and
   * the output PDF exists and is valid (unchanged since it was written, or
-    re-validated with PyMuPDF if it was touched).
-Anything else (new file, changed source, deleted or damaged output, retry due)
-leads to (re)processing. Files are only processed when they are stable and not
+    re-validated with PyMuPDF if it was touched), and
+  * it was made with the current OCR engine version and OCR settings.
+Anything else (new file, changed source, deleted or damaged output, improved OCR,
+retry due) leads to (re)processing. Files are only processed when they are stable and not
 locked, i.e. no longer being copied.
 """
 
@@ -28,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import TEMP_DIR_NAME, AppConfig, same_path
-from .ocr_engine import OcrEngine
+from .ocr_engine import OcrEngine, ProgressCallback, settings_signature
 from .pdf_utils import (
     PdfCheckError,
     copy_with_sha256,
@@ -52,6 +53,7 @@ REASONS = {
     "source_changed": "source file changed since it was processed; scheduled for reprocessing",
     "output_deleted": "output PDF was deleted from the destination folder; scheduled for regeneration",
     "output_invalid": "existing output PDF is outdated, incomplete or corrupted; scheduled for regeneration",
+    "ocr_upgraded": "output was made with older OCR settings; scheduled for reprocessing with the current OCR",
     "retry": "retrying after an earlier failure",
 }
 
@@ -121,6 +123,7 @@ class Processor:
         self.state = state
         self.stop_event = stop_event
         self.engine = OcrEngine(config, stop_event)
+        self.signature = settings_signature(config)
         # key -> (size, mtime_ns, monotonic time this fingerprint was first seen)
         self._seen: dict[str, tuple[int, int, float]] = {}
         # key -> (size, mtime_ns, sha256)
@@ -232,9 +235,12 @@ class Processor:
             if unchanged:
                 if record.get("status") == STATUS_COMPLETED:
                     output = self._check_output(sf, record)
-                    if output == "ok":
+                    if output == "ok" and record.get("ocr_signature") == self.signature:
                         return Decision(SKIP, "up_to_date")
-                    reason = "output_deleted" if output == "missing" else "output_invalid"
+                    if output == "ok":
+                        reason = "ocr_upgraded"
+                    else:
+                        reason = "output_deleted" if output == "missing" else "output_invalid"
                 else:
                     if record.get("permanent") or time.time() < record.get("next_retry_at", 0):
                         return Decision(HOLD, "failed", self.describe_failure(record))
@@ -313,6 +319,7 @@ class Processor:
                 "pages": source_info.page_count,
                 "output": {"size": out_stat.st_size, "mtime_ns": out_stat.st_mtime_ns},
                 "text_chars": output_info.text_chars,
+                "ocr_signature": self.signature,
                 "completed_at": now_iso(),
                 "adopted": True,
             },
@@ -421,14 +428,14 @@ class Processor:
         return None
 
     def _keep_failure_log(self, sf: SourceFile, ocr_log: Path) -> None:
-        """Keep OCRmyPDF's full output of a failed file in logs\\failed for troubleshooting."""
+        """Keep the per-page OCR log of a failed file in logs\\failed for troubleshooting."""
         if not ocr_log.is_file():
             return
         try:
             folder = self.config.log_dir / "failed"
             folder.mkdir(parents=True, exist_ok=True)
             safe_name = re.sub(r'[\\/:*?"<>|]', "_", sf.rel_path)
-            shutil.copyfile(ocr_log, folder / f"{safe_name}.ocrmypdf.log")
+            shutil.copyfile(ocr_log, folder / f"{safe_name}.ocr.log")
         except OSError:
             pass
 
@@ -445,8 +452,11 @@ class Processor:
                     raise
                 time.sleep(1.0)
 
-    def process(self, sf: SourceFile) -> Outcome:
-        """OCR one source file into its output. The state is updated only after success."""
+    def process(self, sf: SourceFile, progress: ProgressCallback | None = None) -> Outcome:
+        """OCR one source file into its output. The state is updated only after success.
+
+        `progress(done_pages, total_pages)` is called while the pages are being OCR'd.
+        """
         cfg = self.config
         job = uuid.uuid4().hex[:12]
         tmp_dir = cfg.temp_dir
@@ -465,8 +475,7 @@ class Processor:
             if problem:
                 return Outcome("failed", problem)
 
-            # Work on a private copy: the original is never touched, it cannot change
-            # mid-OCR, and the short ASCII name avoids path problems in Ghostscript.
+            # Work on a private copy: the original is never touched and cannot change mid-OCR.
             try:
                 before = sf.path.stat()
                 digest = copy_with_sha256(sf.path, tmp_in)
@@ -490,7 +499,7 @@ class Processor:
                 return Outcome("failed", f"source PDF {exc}", permanent=exc.permanent)
             logger.info("           %s: %d page(s), languages %s", sf.rel_path, info.page_count, cfg.ocr.languages)
 
-            result = self.engine.run(tmp_in, tmp_out, tmp_log)
+            result = self.engine.run(tmp_in, tmp_out, tmp_log, progress)
             if result.status == "cancelled":
                 return Outcome("cancelled", result.message)
             if result.status != "ok":
@@ -523,15 +532,19 @@ class Processor:
                     "pages": info.page_count,
                     "output": {"size": out_stat.st_size, "mtime_ns": out_stat.st_mtime_ns},
                     "text_chars": out_info.text_chars,
+                    "ocr_signature": self.signature,
                     "completed_at": now_iso(),
                 },
             )
+            minutes, seconds = divmod(int(time.monotonic() - started), 60)
             message = (
                 f"{info.page_count} page(s), {out_info.text_chars} characters of text, "
-                f"{time.monotonic() - started:.1f} s"
+                f"{minutes} min {seconds} s"
             )
             if result.message:
                 message += f" ({result.message})"
+            if "OCR failed on page" in result.message:
+                self._keep_failure_log(sf, tmp_log)
             if out_info.text_chars == 0:
                 message += " — no text was recognised (blank pages or wrong OCR language?)"
             return Outcome("completed", message)

@@ -1,3 +1,3 @@
-"""PDF OCR - converts scanned PDFs into searchable PDFs using OCRmyPDF and Tesseract."""
+"""PDF OCR - converts scanned PDFs into searchable PDFs using Tesseract (tuned for Arabic)."""
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"

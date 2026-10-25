@@ -54,12 +54,6 @@ def inspect_pdf(path: Path, count_text: bool = False) -> PdfInfo:
             raise PdfCheckError(
                 "is password-protected. Save a copy without a password and put that copy in the source folder."
             )
-        encryption = (doc.metadata or {}).get("encryption")
-        if encryption:
-            raise PdfCheckError(
-                f"is encrypted ({encryption}). OCRmyPDF cannot process encrypted PDFs; save an "
-                "unrestricted copy (for example with 'Microsoft Print to PDF') and use that instead."
-            )
         if doc.page_count < 1:
             raise PdfCheckError("contains no pages")
         sizes: list[tuple[float, float]] = []

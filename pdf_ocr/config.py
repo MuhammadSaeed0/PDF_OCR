@@ -6,8 +6,7 @@ import configparser
 import hashlib
 import os
 import re
-import shlex
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent.parent
@@ -17,14 +16,8 @@ DEFAULT_CONFIG_PATH = APP_DIR / "config.ini"
 # the same drive as the outputs so the finished PDF can be moved into place atomically.
 TEMP_DIR_NAME = ".pdf_ocr_tmp"
 
-OCR_MODES = {
-    "skip_text": "--skip-text",
-    "redo_ocr": "--redo-ocr",
-    "force_ocr": "--force-ocr",
-}
-OUTPUT_TYPES = ("pdf", "pdfa", "pdfa-1", "pdfa-2", "pdfa-3")
-PDF_RENDERERS = ("auto", "hocr", "sandwich")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+AUTO_LANGUAGES = "auto"
 
 _LANGUAGE_RE = re.compile(r"^[A-Za-z0-9_/\-]+$")
 
@@ -35,23 +28,22 @@ class ConfigError(Exception):
 
 @dataclass
 class OcrSettings:
-    """Options passed to OCRmyPDF."""
+    """OCR options (see the [ocr] section of config.ini)."""
 
-    languages: str = "eng+ara"
-    mode: str = "skip_text"
-    rotate_pages: bool = False
-    deskew: bool = False
-    optimize: int = 1
-    output_type: str = "pdf"
-    pdf_renderer: str = "sandwich"
+    languages: str = AUTO_LANGUAGES
+    resolution: int = 300
+    page_segmentation_mode: int = 3
+    skip_pages_with_text: bool = True
+    straighten_pages: bool = True
     jobs: int = 0
     tesseract_timeout: int = 300
-    oversample: int = 0
-    file_timeout_minutes: int = 120
-    extra_args: list[str] = field(default_factory=list)
+    file_timeout_minutes: int = 360
 
     @property
     def language_list(self) -> list[str]:
+        """Tesseract languages that must be installed."""
+        if self.languages == AUTO_LANGUAGES:
+            return ["ara", "eng"]
         return [lang for lang in self.languages.split("+") if lang]
 
 
@@ -70,7 +62,6 @@ class AppConfig:
     max_retry_delay_seconds: int
     min_free_space_mb: int
     tesseract_dir: Path | None
-    ghostscript_dir: Path | None
     tessdata_dir: Path | None
     state_dir: Path
     log_dir: Path
@@ -219,6 +210,8 @@ def _get_path(
 
 
 def _parse_languages(raw: str) -> str:
+    if raw.strip().lower() in ("", AUTO_LANGUAGES):
+        return AUTO_LANGUAGES
     langs = [part for part in re.split(r"[+,\s]+", raw) if part]
     if not langs:
         raise ConfigError("[ocr] languages must name at least one Tesseract language, e.g. eng+ara")
@@ -226,16 +219,6 @@ def _parse_languages(raw: str) -> str:
         if not _LANGUAGE_RE.match(lang):
             raise ConfigError(f"[ocr] languages contains an invalid language code: {lang!r}")
     return "+".join(dict.fromkeys(langs))  # remove duplicates, keep order
-
-
-def _parse_extra_args(raw: str) -> list[str]:
-    if not raw:
-        return []
-    try:
-        parts = shlex.split(raw, posix=False)
-    except ValueError as exc:
-        raise ConfigError(f"[ocr] extra_args cannot be parsed: {exc}") from exc
-    return [p[1:-1] if len(p) >= 2 and p[0] == p[-1] == '"' else p for p in parts]
 
 
 def load_config(
@@ -272,21 +255,15 @@ def load_config(
         raise ConfigError("[folders] destination_folder is not set in config.ini")
 
     ocr = OcrSettings(
-        languages=_parse_languages(_get_str(cp, "ocr", "languages", "eng+ara")),
-        mode=_get_choice(cp, "ocr", "mode", "skip_text", tuple(OCR_MODES)),
-        rotate_pages=_get_bool(cp, "ocr", "rotate_pages", False),
-        deskew=_get_bool(cp, "ocr", "deskew", False),
-        optimize=_get_int(cp, "ocr", "optimize", 1, 0, 3),
-        output_type=_get_choice(cp, "ocr", "output_type", "pdf", OUTPUT_TYPES),
-        pdf_renderer=_get_choice(cp, "ocr", "pdf_renderer", "sandwich", PDF_RENDERERS),
+        languages=_parse_languages(_get_str(cp, "ocr", "languages", AUTO_LANGUAGES)),
+        resolution=_get_int(cp, "ocr", "resolution", 300, 150, 600),
+        page_segmentation_mode=_get_int(cp, "ocr", "page_segmentation_mode", 3, 1, 13),
+        skip_pages_with_text=_get_bool(cp, "ocr", "skip_pages_with_text", True),
+        straighten_pages=_get_bool(cp, "ocr", "straighten_pages", True),
         jobs=_get_int(cp, "ocr", "jobs", 0, 0, 256),
         tesseract_timeout=_get_int(cp, "ocr", "tesseract_timeout", 300, 10, 86400),
-        oversample=_get_int(cp, "ocr", "oversample", 0, 0, 1200),
-        file_timeout_minutes=_get_int(cp, "ocr", "file_timeout_minutes", 120, 0, 10080),
-        extra_args=_parse_extra_args(_get_str(cp, "ocr", "extra_args", "")),
+        file_timeout_minutes=_get_int(cp, "ocr", "file_timeout_minutes", 360, 0, 10080),
     )
-    if ocr.mode == "redo_ocr" and ocr.deskew:
-        raise ConfigError("[ocr] deskew = true cannot be combined with mode = redo_ocr (an OCRmyPDF restriction)")
 
     return AppConfig(
         config_path=config_path,
@@ -300,7 +277,6 @@ def load_config(
         max_retry_delay_seconds=_get_int(cp, "monitor", "max_retry_delay_seconds", 3600, 10, 7 * 86400),
         min_free_space_mb=_get_int(cp, "monitor", "min_free_space_mb", 1024, 0, 10**7),
         tesseract_dir=_get_path(cp, "paths", "tesseract_dir", base),
-        ghostscript_dir=_get_path(cp, "paths", "ghostscript_dir", base),
         tessdata_dir=_get_path(cp, "paths", "tessdata_dir", base),
         state_dir=_get_path(cp, "paths", "state_dir", base, "data") or base / "data",
         log_dir=_get_path(cp, "logging", "log_dir", base, "logs") or base / "logs",
